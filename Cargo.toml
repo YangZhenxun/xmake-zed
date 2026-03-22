@@ -10,4 +10,3 @@ crate-type = ["cdylib"]
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 zed_extension_api = "0.7.0"
-which = "8.0.0"

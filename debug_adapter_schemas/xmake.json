@@ -32,12 +32,24 @@
     "debugger": {
       "type": "string",
       "description": "The type of debugger to use",
-      "default": "lldb-dap"
+      "default": "lldb-dap",
+      "enum": ["lldb-dap", "gdb-dap"]
     },
     "request": {
       "type": "string",
       "description": "The launch configuration to use",
       "default": ""
+    },
+    "console": {
+      "type": "string",
+      "description": "Specify where to launch the program: internal console (internalConsole), integrated terminal (integratedTerminal) or external terminal (externalTerminal).",
+      "default": "integratedTerminal",
+      "enum": ["integratedTerminal", "internalConsole"]
+    },
+    "label": {
+      "type": "string",
+      "description": "The label to use for the debug scenario",
+      "default": "xmake debug"
     }
   }
 }

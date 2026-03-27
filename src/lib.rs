@@ -14,6 +14,8 @@ struct XMakeDebugConfig {
     stop_at_entry: Option<bool>,
     pid: Option<u32>,
     debugger: Option<String>,
+    console: Option<String>,
+    label: String,
 }
 
 impl Default for XMakeDebugConfig {
@@ -27,6 +29,8 @@ impl Default for XMakeDebugConfig {
             stop_at_entry: None,
             pid: None,
             debugger: None,
+            console: Some("integratedTerminal".to_string()),
+            label: "xmake debug".to_string(),
         }
     }
 }
@@ -190,6 +194,30 @@ impl XMakeExtension {
         };
         let target_name = config_target.unwrap_or_else(|| "default".to_string());
         return target_name;
+    }
+
+    fn request_args(
+        &self,
+        mut configuration: serde_json::Value,
+        label: String,
+        request: zed_extension_api::StartDebuggingRequestArgumentsRequest,
+        cwd: serde_json::Value,
+    ) -> zed_extension_api::StartDebuggingRequestArguments {
+        let obj = configuration
+            .as_object_mut()
+            .ok_or("Xmake is not a vaild object")
+            .unwrap();
+
+        // CodeLLDB uses `name` for a terminal label.
+        obj.entry("name")
+            .or_insert(serde_json::Value::String(String::from(label)));
+
+        obj.entry("cwd").or_insert(cwd);
+
+        zed_extension_api::StartDebuggingRequestArguments {
+            request,
+            configuration: configuration.to_string(),
+        }
     }
 }
 
@@ -404,12 +432,19 @@ impl zed::Extension for XMakeExtension {
             command: Some(command),
             arguments,
             envs: xmake_config.env.into_iter().collect(),
-            cwd: Some(xmake_config.cwd.unwrap_or_else(|| worktree.root_path())),
+            cwd: Some(
+                xmake_config
+                    .cwd
+                    .clone()
+                    .unwrap_or_else(|| worktree.root_path()),
+            ),
             connection: None,
-            request_args: zed_extension_api::StartDebuggingRequestArguments {
-                configuration,
+            request_args: self.request_args(
+                serde_json::Value::String(configuration),
+                xmake_config.label,
                 request,
-            },
+                serde_json::Value::String(xmake_config.cwd.unwrap_or_else(|| worktree.root_path())),
+            ),
         })
     }
 
@@ -444,6 +479,8 @@ impl zed::Extension for XMakeExtension {
                     stop_at_entry: config.stop_on_entry,
                     pid: None,
                     debugger: None,
+                    console: Some("integratedTerminal".to_string()),
+                    label: "xmake debug".to_string(),
                 })
                 .unwrap();
                 Ok(zed_extension_api::DebugScenario {
@@ -464,6 +501,8 @@ impl zed::Extension for XMakeExtension {
                     stop_at_entry: config.stop_on_entry,
                     pid: attach.process_id,
                     debugger: None,
+                    console: None,
+                    label: "xmake debug".to_string(),
                 })
                 .unwrap();
                 Ok(zed::DebugScenario {
@@ -544,6 +583,8 @@ impl zed::Extension for XMakeExtension {
             stop_at_entry: Some(false),
             pid: None,
             debugger: Some("lldb-dap".to_string()),
+            console: Some("integratedTerminal".to_string()),
+            label: "xmake debug".to_string(),
         };
 
         let config_json = serde_json::to_string(&xmake_config).ok()?;

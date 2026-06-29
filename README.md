@@ -46,6 +46,9 @@ Please see [xmake-github](https://github.com/xmake-io/xmake) and [website](https
 * Code Intelligence
 * Symbol Navigation
 * Project Templates
+* **Build / Run / Clean tasks** (Zed-native, fixed and deduplicated)
+* **Debugging** via a debug adapter (`lldb-dap` / `gdb-dap`) with an `xmake` debug locator that builds the target and resolves the executable automatically
+* **Project-wide tasks**: one-click install of core xmake tasks into `.zed/tasks.json` so they are available from any file
 
 * **Full LSP Integration**: Complete language server support via [xmake_ls](https://github.com/CppCXY/xmake_ls)
 * **Auto-completion**: Intelligent code completion for XMake APIs
@@ -214,6 +217,99 @@ Linux users can choose their preferred binary variant. Add to your Zed settings:
 * **Alpine Linux, containers:** Use `musl`
 * **Older distros:** Use `*-glibc.2.17` variants
 * **Latest distros:** Use `x64` or `aarch64`
+
+## Build & Run Tasks
+
+The extension ships a comprehensive set of Zed-native tasks (visible via
+`task: spawn` while an `xmake.lua` is open): `build`, `build all`, `rebuild`,
+`clean`, `run`, `build & run`, `configure`, mode switches (`debug` /
+`release` / `relwithdebinfo` / `minsizerel`), toolchain switches (GCC / Clang /
+MSVC / Zig), C++ standard switches, sanitizer toggles, `install`, `package`,
+`format`, project generation (`compile_commands.json`, Visual Studio, Xcode),
+and project scaffolding tasks.
+
+A few things worth knowing:
+
+* Tasks that chain commands (`rebuild`, `build & run`, the `compile_commands`
+  generator) run through `sh -c`, so they require a POSIX shell. On Windows use
+  Git Bash / WSL, or run the individual `xmake` steps separately.
+* `compile_commands.json` is generated **into the `.zed/` directory** so the
+  whole `.zed/` folder can be gitignored cleanly (matches the VS Code
+  extension's behaviour with `.vscode/`). Point `clangd` / `ccls` at
+  `.zed/compile_commands.json`.
+
+### Making tasks available from any file (issue #4)
+
+By design, Zed only exposes a language extension's tasks while a file of that
+language is open — so the xmake tasks normally appear only when `xmake.lua` is
+the active buffer.
+
+To make the core build/run/clean/configure tasks available project-wide
+(regardless of which file is open), run the task **`xmake: install project
+tasks (to .zed/tasks.json)`** once. It writes a small set of core tasks into
+your project's `.zed/tasks.json` (backing up any existing file to
+`.zed/tasks.json.bak`). After that, `task: spawn` lists them from any file.
+
+## Debugging
+
+The extension registers an `xmake` debug adapter and an `xmake` debug locator,
+so you can build a target and launch it under the debugger in one step.
+
+### Prerequisites
+
+* A debug build of your target. The locator runs `xmake build <target>` for
+  you, but the project must be configured for debugging first:
+
+  ```bash
+  xmake config -m debug -y
+  ```
+
+* A supported debug adapter on your `PATH`:
+  * **`lldb-dap`** (default) — `brew install llvm` (macOS), `sudo apt install
+    lldb` (Linux), or LLVM on Windows. On macOS, Xcode 16+'s `xcrun lldb-dap`
+    is also detected.
+  * **`gdb-dap`** — `gdb` started with `-i dap`. Set `"debugger": "gdb-dap"` in
+    your debug config.
+
+### Debugging via the locator (recommended)
+
+1. Open the Zed debug picker (`debugger: start`).
+2. The `xmake` locator offers one scenario per xmake target (built + launched).
+   Selecting it:
+   1. runs `xmake build <target>` (the build step),
+   2. resolves the freshly built executable via `xmake l targetpath.lua`,
+   3. launches it under `lldb-dap`.
+3. Set breakpoints in your source and debug.
+
+### Debugging via a manual `debug.json`
+
+For full control, create `.zed/debug.json` (or use the debug modal):
+
+```json
+[
+  {
+    "label": "xmake debug: mytarget",
+    "adapter": "xmake",
+    "request": "launch",
+    "program": "${ZED_WORKTREE_ROOT}/build/.../mytarget",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "args": [],
+    "env": {},
+    "stopOnEntry": false,
+    "debugger": "lldb-dap"
+  }
+]
+```
+
+When `program` is omitted, the locator resolves it automatically after the
+build step. Supported fields: `program`, `args`, `cwd`, `env`, `request`
+(`launch` | `attach`), `stopOnEntry`, `pid` (attach only), `debugger`
+(`lldb-dap` | `gdb-dap`), `label`.
+
+> The extension translates the xmake-style config into the schema the
+> underlying adapter expects (`stopOnEntry` for lldb-dap,
+> `stopAtBeginningOfMainSubprogram` for gdb-dap), so you can keep a single
+> portable config.
 
 ## Binary Detection Priority
 

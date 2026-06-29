@@ -1,20 +1,40 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, path::Path};
+use std::collections::HashMap;
 use zed_extension_api::{self as zed, LanguageServerId, Result, Worktree, settings::LspSettings};
+
 mod utils;
 
-#[derive(Deserialize, Serialize)]
+/// The user-facing debug configuration. Mirrors the schema in
+/// `debug_adapter_schemas/xmake.json` and the VS Code xmake extension so that
+/// `debug.json` files stay portable between editors.
+///
+/// Field names are camelCase on the wire (note `stop_at_entry` -> `stopAtEntry`)
+/// because the underlying debug adapters (lldb-dap / gdb-dap) use that spelling.
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase", default)]
 struct XMakeDebugConfig {
+    /// Absolute path to the binary to debug. Resolved by the `xmake` debug
+    /// locator after building the target.
     program: Option<String>,
+    /// Command-line arguments forwarded to the debugged program.
     args: Option<Vec<String>>,
+    /// Working directory for the debugged program.
     cwd: Option<String>,
+    /// Extra environment variables for the debugged program.
+    #[serde(default)]
     env: HashMap<String, String>,
+    /// `"launch"` (default) or `"attach"`.
     request: String,
+    /// Whether to stop immediately after launching.
     stop_at_entry: Option<bool>,
+    /// Process id to attach to (only meaningful for `request: "attach"`).
     pid: Option<u32>,
+    /// Which low-level debugger to drive: `"lldb-dap"` (default) or `"gdb-dap"`.
     debugger: Option<String>,
+    /// Kept for schema compatibility with the VS Code extension; Zed's DAP host
+    /// manages consoles itself so this is intentionally unused here.
     console: Option<String>,
+    /// Display label for the debug scenario.
     label: String,
 }
 
@@ -32,6 +52,46 @@ impl Default for XMakeDebugConfig {
             console: Some("integratedTerminal".to_string()),
             label: "xmake debug".to_string(),
         }
+    }
+}
+
+impl XMakeDebugConfig {
+    /// Build the JSON configuration that the *underlying* debug adapter
+    /// (lldb-dap / gdb-dap) understands. The xmake wrapper fields such as
+    /// `debugger`, `console`, `label` and `request` are intentionally dropped
+    /// — they are not part of the adapter's schema and only add noise.
+    ///
+    /// `stop_at_entry` is translated to the spelling each adapter expects.
+    fn to_adapter_config(&self) -> serde_json::Value {
+        let stop = self.stop_at_entry.unwrap_or(false);
+        let debugger = self.debugger.as_deref().unwrap_or("lldb-dap");
+        let mut cfg = serde_json::json!({
+            "program": self.program.clone().unwrap_or_default(),
+            "args": self.args.clone().unwrap_or_default(),
+            "cwd": self.cwd.clone().unwrap_or_default(),
+            "env": self.env,
+        });
+        let obj = cfg.as_object_mut().expect("json! builds an object");
+        match debugger {
+            // lldb-dap reads `stopOnEntry`.
+            "lldb-dap" => {
+                obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
+            }
+            // gdb-dap reads `stopAtBeginningOfMainSubprogram`; it also tolerates
+            // `stopOnEntry`, so set both for forward compatibility.
+            "gdb-dap" => {
+                obj.insert(
+                    "stopAtBeginningOfMainSubprogram".to_string(),
+                    serde_json::Value::Bool(stop),
+                );
+                obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
+            }
+            // Unknown adapter: fall back to the common `stopOnEntry` spelling.
+            _ => {
+                obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
+            }
+        }
+        cfg
     }
 }
 
@@ -137,7 +197,7 @@ impl XMakeExtension {
         let way_of_installation = match platform {
             zed::Os::Mac => "`brew install llvm` or ensure Xcode 16+ is installed.",
             zed::Os::Linux => {
-                "sudo apt install lldb` (Ubuntu/Debian) or `sudo pacman -S lldb` (Arch)."
+                "`sudo apt install lldb` (Ubuntu/Debian) or `sudo pacman -S lldb` (Arch)."
             }
             zed::Os::Windows => "Install LLVM from https://llvm.org and add it to PATH.",
         };
@@ -173,51 +233,50 @@ impl XMakeExtension {
         }
     }
 
-    fn read_default_target(&self, project_root: String) -> Option<String> {
-        let settings_path = Path::new(project_root.as_str())
-            .join(".zed")
-            .join("settings.json");
-        if !settings_path.exists() {
-            return None;
-        }
-        let content = fs::read_to_string(settings_path).ok()?;
-        let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-        json.get("xmake.defaultTarget")?.as_str().map(String::from)
-    }
-
-    fn get_target_name(&self, build_task: zed_extension_api::TaskTemplate) -> String {
-        let project_root = build_task.cwd.as_deref();
-        let config_target = if let Some(some_project_root) = project_root {
-            self.read_default_target(some_project_root.to_string())
-        } else {
-            None
-        };
-        let target_name = config_target.unwrap_or_else(|| "default".to_string());
-        return target_name;
-    }
-
-    fn request_args(
+    /// Resolve the absolute output path of an xmake target by running
+    /// `xmake l targetpath.lua <target> <projectdir>` through Zed's WIT-backed
+    /// process API.
+    ///
+    /// Returns `None` (rather than an error) when the project is not configured
+    /// yet or no binary target exists, so callers can fall back gracefully.
+    fn resolve_target_program(
         &self,
-        mut configuration: serde_json::Value,
-        label: String,
-        request: zed_extension_api::StartDebuggingRequestArgumentsRequest,
-        cwd: serde_json::Value,
-    ) -> zed_extension_api::StartDebuggingRequestArguments {
-        let obj = configuration
-            .as_object_mut()
-            .ok_or("Xmake is not a vaild object")
-            .unwrap();
+        target_name: &str,
+        project_dir: &str,
+    ) -> Option<String> {
+        let script_path = utils::ensure_target_path_script()?;
+        let script_str = script_path.to_str()?.to_string();
 
-        // CodeLLDB uses `name` for a terminal label.
-        obj.entry("name")
-            .or_insert(serde_json::Value::String(String::from(label)));
+        // NOTE: `zed::Command` (the process WIT) has no `cwd` field, so the
+        // project directory is passed as an argument and the lua script does
+        // `os.cd` into it. Using `std::process::Command` here would silently
+        // fail inside the WASM sandbox, which is why the previous debug
+        // support never resolved a program path.
+        let mut cmd = zed::Command::new("xmake")
+            .arg("l")
+            .arg(script_str)
+            .arg(target_name.to_string())
+            .arg(project_dir.to_string());
 
-        obj.entry("cwd").or_insert(cwd);
+        let output = cmd.output().ok()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        utils::parse_target_path_output(&stdout)
+    }
 
-        zed_extension_api::StartDebuggingRequestArguments {
-            request,
-            configuration: configuration.to_string(),
+    /// Extract the xmake target name from a build/run task.
+    ///
+    /// For tasks like `xmake run foo` / `xmake build foo` the target is
+    /// `args[1]`. For tasks without an explicit target it falls back to
+    /// `"default"`, which matches xmake's own behaviour.
+    fn target_name_from_task(task: &zed_extension_api::TaskTemplate) -> String {
+        if task.command == "xmake" {
+            if let Some(name) = task.args.get(1) {
+                if !name.is_empty() {
+                    return name.clone();
+                }
+            }
         }
+        "default".to_string()
     }
 }
 
@@ -247,7 +306,6 @@ impl zed::Extension for XMakeExtension {
         }
 
         if let Some(path) = worktree.which("xmake_ls") {
-            //let path_str = path.to_string_lossy().to_string();
             self.cached_binary_path = Some(path.clone());
             return Ok(zed::Command {
                 command: path,
@@ -257,7 +315,7 @@ impl zed::Extension for XMakeExtension {
         }
 
         if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
+            if std::fs::metadata(path).map_or(false, |stat| stat.is_file()) {
                 return Ok(zed::Command {
                     command: path.clone(),
                     args: vec![],
@@ -333,7 +391,7 @@ impl zed::Extension for XMakeExtension {
         let version_dir = format!("xmake_ls-{}", release.version);
         let binary_path = format!("{version_dir}/{binary_name}");
 
-        if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
+        if !std::fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
@@ -343,11 +401,11 @@ impl zed::Extension for XMakeExtension {
                 .map_err(|e| format!("failed to download file: {e}"))?;
 
             let entries =
-                fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
+                std::fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
             for entry in entries {
                 let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
                 if entry.file_name().to_str() != Some(&version_dir) {
-                    fs::remove_dir_all(entry.path()).ok();
+                    std::fs::remove_dir_all(entry.path()).ok();
                 }
             }
 
@@ -397,9 +455,10 @@ impl zed::Extension for XMakeExtension {
         if adapter_name != "xmake" {
             return Err(format!("This adapter does not support: {}", adapter_name));
         }
-        let configuration = config.config.to_string();
+
         let xmake_config: XMakeDebugConfig = serde_json::from_str(&config.config)
             .map_err(|e| format!("Failed to parse debug config: {}", e))?;
+
         let debugger_type = xmake_config.debugger.as_deref().unwrap_or("lldb-dap");
         let (debugger_path, base_args) = match debugger_type {
             "lldb-dap" => {
@@ -419,15 +478,25 @@ impl zed::Extension for XMakeExtension {
             }
             _ => return Err(format!("Unsupported debugger: {}", debugger_type)),
         };
+
         let request = match xmake_config.request.as_str() {
             "launch" => zed_extension_api::StartDebuggingRequestArgumentsRequest::Launch,
             "attach" => zed_extension_api::StartDebuggingRequestArgumentsRequest::Attach,
-            _ => return Err(format!("Invalid request type: {}", xmake_config.request)),
+            other => return Err(format!("Invalid request type: {}", other)),
         };
+
         let (command, arguments) = user_provided_debug_adapter_path
             .map(|path| (path, Vec::<String>::new()))
             .or_else(|| Some((debugger_path, base_args)))
             .ok_or_else(|| "Could not find debugger path".to_owned())?;
+
+        // Build the adapter-specific configuration. The underlying debuggers
+        // (lldb-dap / gdb-dap) do not understand the xmake wrapper fields, so
+        // we translate to their own schema here.
+        let adapter_config = xmake_config.to_adapter_config();
+        let configuration = serde_json::to_string(&adapter_config)
+            .map_err(|e| format!("failed to serialize adapter config: {e}"))?;
+
         Ok(zed_extension_api::DebugAdapterBinary {
             command: Some(command),
             arguments,
@@ -439,12 +508,10 @@ impl zed::Extension for XMakeExtension {
                     .unwrap_or_else(|| worktree.root_path()),
             ),
             connection: None,
-            request_args: self.request_args(
-                serde_json::Value::String(configuration),
-                xmake_config.label,
+            request_args: zed_extension_api::StartDebuggingRequestArguments {
+                configuration,
                 request,
-                serde_json::Value::String(xmake_config.cwd.unwrap_or_else(|| worktree.root_path())),
-            ),
+            },
         })
     }
 
@@ -470,7 +537,7 @@ impl zed::Extension for XMakeExtension {
     ) -> Result<zed_extension_api::DebugScenario, String> {
         match config.request {
             zed_extension_api::DebugRequest::Launch(launch) => {
-                let xmake_config = serde_json::to_string(&XMakeDebugConfig {
+                let xmake_config = XMakeDebugConfig {
                     program: Some(launch.program),
                     args: Some(launch.args),
                     cwd: launch.cwd.clone(),
@@ -481,18 +548,19 @@ impl zed::Extension for XMakeExtension {
                     debugger: None,
                     console: Some("integratedTerminal".to_string()),
                     label: "xmake debug".to_string(),
-                })
-                .unwrap();
+                };
+                let config_json = serde_json::to_string(&xmake_config)
+                    .map_err(|e| format!("failed to serialize debug config: {e}"))?;
                 Ok(zed_extension_api::DebugScenario {
                     adapter: config.adapter,
                     label: config.label,
-                    config: xmake_config,
+                    config: config_json,
                     tcp_connection: None,
                     build: None,
                 })
             }
             zed_extension_api::DebugRequest::Attach(attach) => {
-                let xmake_config = serde_json::to_string(&XMakeDebugConfig {
+                let xmake_config = XMakeDebugConfig {
                     program: None,
                     args: None,
                     cwd: None,
@@ -503,12 +571,13 @@ impl zed::Extension for XMakeExtension {
                     debugger: None,
                     console: None,
                     label: "xmake debug".to_string(),
-                })
-                .unwrap();
-                Ok(zed::DebugScenario {
+                };
+                let config_json = serde_json::to_string(&xmake_config)
+                    .map_err(|e| format!("failed to serialize debug config: {e}"))?;
+                Ok(zed_extension_api::DebugScenario {
                     label: config.label,
                     adapter: config.adapter,
-                    config: xmake_config,
+                    config: config_json,
                     tcp_connection: None,
                     build: None,
                 })
@@ -519,66 +588,29 @@ impl zed::Extension for XMakeExtension {
     fn dap_locator_create_scenario(
         &mut self,
         _locator_name: String,
-        _build_task: zed_extension_api::TaskTemplate,
-        _resolved_label: String,
-        _debug_adapter_name: String,
+        build_task: zed_extension_api::TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
     ) -> Option<zed_extension_api::DebugScenario> {
-        // Get the project root (cwd)
-        let cwd = _build_task.cwd.as_ref()?;
+        // The build task's cwd is the project root — without it we cannot
+        // locate an executable to debug.
+        let project_root = build_task.cwd.clone()?;
+        let target_name = Self::target_name_from_task(&build_task);
 
-        // Determine the target name:
-        // - If the task command is "xmake", extract target from args (e.g., "xmake run foo" -> "foo")
-        // - Otherwise, try to find a default binary target
-        let target_name = if _build_task.command == "xmake" {
-            _build_task
-                .args
-                .get(1)
-                .cloned()
-                .unwrap_or_else(|| "default".to_string())
-        } else {
-            // For non-xmake tasks, try to find any binary target
-            "default".to_string()
-        };
-
-        // Get the target program path by running xmake
-        let get_target_path_script = utils::get_assets_script_path("targetpath.lua".to_string());
-        let program_path = if let Some(target_path_script) = get_target_path_script {
-            if let Some(cwd) = &_build_task.cwd {
-                let output = std::process::Command::new("xmake")
-                    .args(&["l", &target_path_script.to_str()?, &target_name])
-                    .current_dir(cwd)
-                    .output()
-                    .ok()?;
-
-                // Parse the output to get the actual path (between __begin__ and __end__)
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                let mut in_section = false;
-                let mut path = String::new();
-                for line in output_str.lines() {
-                    if line == "__begin__" {
-                        in_section = true;
-                        continue;
-                    }
-                    if line == "__end__" {
-                        break;
-                    }
-                    if in_section {
-                        path = line.to_string();
-                    }
-                }
-                if !path.is_empty() { Some(path) } else { None }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // Best-effort: try to resolve the program path up front so debugging
+        // also works when the target was already built. The authoritative
+        // resolution happens in `run_dap_locator` after the build step.
+        let program_path = self.resolve_target_program(&target_name, &project_root);
 
         let xmake_config = XMakeDebugConfig {
             program: program_path,
-            args: Some(_build_task.args),
-            cwd: _build_task.cwd.clone(),
-            env: _build_task.env.into_iter().collect(),
+            // The build task's args are xmake build flags (e.g.
+            // `["build", "<target>"]`), not arguments for the debugged
+            // program. Leave program args empty; users who need runtime
+            // arguments should use a manual debug.json.
+            args: None,
+            cwd: build_task.cwd.clone(),
+            env: build_task.env.clone().into_iter().collect(),
             request: "launch".to_string(),
             stop_at_entry: Some(false),
             pid: None,
@@ -586,18 +618,19 @@ impl zed::Extension for XMakeExtension {
             console: Some("integratedTerminal".to_string()),
             label: "xmake debug".to_string(),
         };
-
         let config_json = serde_json::to_string(&xmake_config).ok()?;
 
+        // Build step: `xmake build <target>`. After it completes, Zed calls
+        // `run_dap_locator` (because `locator_name` is set) to resolve the
+        // freshly built executable.
         let build_template = zed_extension_api::TaskTemplate {
-            label: format!("Build {}", target_name),
+            label: format!("xmake build {}", target_name),
             command: "xmake".to_string(),
             args: vec!["build".to_string(), target_name.clone()],
             env: Default::default(),
-            cwd: _build_task.cwd.clone(),
+            cwd: build_task.cwd.clone(),
         };
-
-        let build_task = zed_extension_api::BuildTaskDefinition::Template(
+        let build_task_def = zed_extension_api::BuildTaskDefinition::Template(
             zed_extension_api::BuildTaskDefinitionTemplatePayload {
                 locator_name: Some("xmake".to_string()),
                 template: build_template,
@@ -605,12 +638,49 @@ impl zed::Extension for XMakeExtension {
         );
 
         Some(zed_extension_api::DebugScenario {
-            adapter: _debug_adapter_name,
-            label: _resolved_label,
+            adapter: debug_adapter_name,
+            label: resolved_label,
             config: config_json,
             tcp_connection: None,
-            build: Some(build_task),
+            build: Some(build_task_def),
         })
+    }
+
+    fn run_dap_locator(
+        &mut self,
+        _locator_name: String,
+        config: zed_extension_api::TaskTemplate,
+    ) -> Result<zed_extension_api::DebugRequest, String> {
+        // `config` is the *resolved* build task (variables substituted) that
+        // just ran. Its cwd is the project root and its args tell us which
+        // target was built.
+        let project_root = config
+            .cwd
+            .clone()
+            .ok_or_else(|| "build task has no cwd; cannot locate xmake project".to_string())?;
+        let target_name = Self::target_name_from_task(&config);
+
+        let program = self
+            .resolve_target_program(&target_name, &project_root)
+            .ok_or_else(|| {
+                format!(
+                    "could not resolve the executable for target `{}` in `{}`. \
+                     Run `xmake config -m debug` and `xmake build {}` first.",
+                    target_name, project_root, target_name
+                )
+            })?;
+
+        Ok(zed_extension_api::DebugRequest::Launch(
+            zed_extension_api::LaunchRequest {
+                program,
+                cwd: Some(project_root),
+                // Runtime args for the debugged program are not known to the
+                // locator (they belong to `xmake run`, not `xmake build`).
+                // Pass none; users needing args should use a manual debug.json.
+                args: Vec::new(),
+                envs: config.env.clone().into_iter().collect(),
+            },
+        ))
     }
 }
 

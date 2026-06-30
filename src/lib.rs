@@ -592,31 +592,50 @@ impl zed::Extension for XMakeExtension {
         resolved_label: String,
         debug_adapter_name: String,
     ) -> Option<zed_extension_api::DebugScenario> {
-        // The build task's cwd is the project root — without it we cannot
-        // locate an executable to debug.
+        // Zed feeds EVERY available task to every registered locator, so we
+        // must reject non-xmake tasks early (the docs explicitly recommend
+        // this). We only know how to debug tasks that build or run an xmake
+        // target, i.e. `xmake build [target]` or `xmake run [target]`.
+        //
+        // Tasks that chain commands via `sh -c` (e.g. "build & run") are
+        // rejected here on purpose: their args[0] is "-c", not "build"/"run",
+        // and we cannot reliably extract a target from a shell string. Users
+        // who want to debug those should use a manual `.zed/debug.json`.
+        if build_task.command != "xmake" {
+            return None;
+        }
+        let subcommand = build_task.args.get(0).map(String::as_str).unwrap_or("");
+        let is_build = subcommand == "build";
+        let is_run = subcommand == "run";
+        if !is_build && !is_run {
+            return None;
+        }
+
+        // The build task's cwd is the project root. At this stage the task
+        // template is *unresolved* (variables like $ZED_WORKTREE_ROOT are not
+        // substituted yet), so we cannot run xmake to resolve the program
+        // path here — that happens in `run_dap_locator` after the build step,
+        // when Zed passes us a resolved task. We still record the cwd so the
+        // build step runs in the right directory.
         let project_root = build_task.cwd.clone()?;
         let target_name = Self::target_name_from_task(&build_task);
 
-        // Best-effort: try to resolve the program path up front so debugging
-        // also works when the target was already built. The authoritative
-        // resolution happens in `run_dap_locator` after the build step.
-        let program_path = self.resolve_target_program(&target_name, &project_root);
-
         let xmake_config = XMakeDebugConfig {
-            program: program_path,
+            // Left empty on purpose: resolved post-build by run_dap_locator.
+            program: None,
             // The build task's args are xmake build flags (e.g.
             // `["build", "<target>"]`), not arguments for the debugged
             // program. Leave program args empty; users who need runtime
             // arguments should use a manual debug.json.
             args: None,
-            cwd: build_task.cwd.clone(),
+            cwd: Some(project_root),
             env: build_task.env.clone().into_iter().collect(),
             request: "launch".to_string(),
             stop_at_entry: Some(false),
             pid: None,
             debugger: Some("lldb-dap".to_string()),
             console: Some("integratedTerminal".to_string()),
-            label: "xmake debug".to_string(),
+            label: resolved_label.clone(),
         };
         let config_json = serde_json::to_string(&xmake_config).ok()?;
 

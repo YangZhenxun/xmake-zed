@@ -16,3 +16,6 @@ Cargo.lock
 
 # Tree-sitter grammars are downloaded by Zed on install
 /grammars
+
+# WorkBuddy agent memory (local only, not for upstream)
+/.workbuddy

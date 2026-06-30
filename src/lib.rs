@@ -31,8 +31,12 @@ struct XMakeDebugConfig {
     pid: Option<u32>,
     /// Which low-level debugger to drive: `"lldb-dap"` (default) or `"gdb-dap"`.
     debugger: Option<String>,
-    /// Kept for schema compatibility with the VS Code extension; Zed's DAP host
-    /// manages consoles itself so this is intentionally unused here.
+    /// Kept for schema compatibility with the VS Code extension. For lldb-dap
+    /// this field is forwarded to the adapter (see `to_adapter_config`):
+    /// `"integratedTerminal"` makes lldb-dap issue a DAP `runInTerminal`
+    /// reverse request so Zed opens an interactive terminal and the program's
+    /// stdin accepts user input. `"internalConsole"` (lldb-dap's default)
+    /// captures stdio into the read-only Debug Console instead.
     console: Option<String>,
     /// Display label for the debug scenario.
     label: String,
@@ -62,9 +66,21 @@ impl XMakeDebugConfig {
     /// — they are not part of the adapter's schema and only add noise.
     ///
     /// `stop_at_entry` is translated to the spelling each adapter expects.
+    ///
+    /// The `console` field is **forwarded** to lldb-dap (not dropped): lldb-dap
+    /// reads it to decide whether to launch in an interactive integrated
+    /// terminal (`"integratedTerminal"`, stdin works) or the read-only Debug
+    /// Console (`"internalConsole"`, its default). Without it the user cannot
+    /// type into the running program. We also set the deprecated
+    /// `runInTerminal: true` so older lldb-dap (< 21.0, which predates the
+    /// `console` field) still get an interactive terminal.
     fn to_adapter_config(&self) -> serde_json::Value {
         let stop = self.stop_at_entry.unwrap_or(false);
         let debugger = self.debugger.as_deref().unwrap_or("lldb-dap");
+        let console = self
+            .console
+            .clone()
+            .unwrap_or_else(|| "integratedTerminal".to_string());
         let mut cfg = serde_json::json!({
             "program": self.program.clone().unwrap_or_default(),
             "args": self.args.clone().unwrap_or_default(),
@@ -73,20 +89,24 @@ impl XMakeDebugConfig {
         });
         let obj = cfg.as_object_mut().expect("json! builds an object");
         match debugger {
-            // lldb-dap reads `stopOnEntry`.
             "lldb-dap" => {
                 obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
+                // `console` is supported from lldb-dap 21.0; `runInTerminal`
+                // is the deprecated equivalent for older builds. Both point at
+                // the same behavior, so setting them together is safe.
+                obj.insert("console".to_string(), serde_json::Value::String(console));
+                obj.insert("runInTerminal".to_string(), serde_json::Value::Bool(true));
             }
-            // gdb-dap reads `stopAtBeginningOfMainSubprogram`; it also tolerates
-            // `stopOnEntry`, so set both for forward compatibility.
             "gdb-dap" => {
+                // gdb-dap does not understand `console`; it always launches via
+                // the client's `runInTerminal` reverse request when the client
+                // supports it, so we leave it alone here.
                 obj.insert(
                     "stopAtBeginningOfMainSubprogram".to_string(),
                     serde_json::Value::Bool(stop),
                 );
                 obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
             }
-            // Unknown adapter: fall back to the common `stopOnEntry` spelling.
             _ => {
                 obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
             }

@@ -304,12 +304,44 @@ For full control, create `.zed/debug.json` (or use the debug modal):
 When `program` is omitted, the locator resolves it automatically after the
 build step. Supported fields: `program`, `args`, `cwd`, `env`, `request`
 (`launch` | `attach`), `stopOnEntry`, `pid` (attach only), `debugger`
-(`lldb-dap` | `gdb-dap`), `label`.
+(`lldb-dap` | `gdb-dap`), `console` (`internalConsole` | `integratedTerminal`),
+`label`.
 
 > The extension translates the xmake-style config into the schema the
 > underlying adapter expects (`stopOnEntry` for lldb-dap,
 > `stopAtBeginningOfMainSubprogram` for gdb-dap), so you can keep a single
 > portable config.
+
+### Interactive stdin / terminal input
+
+By default the debugged program runs in the **read-only Debug Console**
+(`"console": "internalConsole"`). Breakpoints, stepping and variable
+inspection all work; only interactive stdin is unavailable.
+
+lldb-dap's `"console": "integratedTerminal"` (interactive terminal, stdin
+works) uses lldb-dap's own "runInTerminal launcher" mechanism — a FIFO-based
+child process, **not** the standard DAP `runInTerminal` reverse request. On
+Zed this frequently times out:
+
+```
+error: Failed to attach to the target process.
+       Timed out trying to get messages from the runInTerminal launcher
+```
+
+The timeout is triggered by a combination of factors: paths containing
+spaces, shell quoting, and FIFO communication between the lldb-dap launcher
+child and the main process. It is **not** a bug in this extension — it is a
+known incompatibility between lldb-dap's launcher mechanism and Zed's
+terminal integration.
+
+> **Note:** Zed's built-in Rust/C++ debugging uses **CodeLLDB**
+> (`vadimcn/codelldb`), which is a *different* adapter from `lldb-dap` and
+> has its own terminal management. That is why Rust debug accepts stdin while
+> `lldb-dap` does not.
+
+If you need interactive stdin, the reliable workaround is to run the program
+manually in Zed's Terminal panel (`ctrl+` ` `) with `xmake run <target>`,
+and use the debugger for breakpoints/stepping only.
 
 ## Binary Detection Priority
 

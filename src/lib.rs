@@ -31,12 +31,16 @@ struct XMakeDebugConfig {
     pid: Option<u32>,
     /// Which low-level debugger to drive: `"lldb-dap"` (default) or `"gdb-dap"`.
     debugger: Option<String>,
-    /// Kept for schema compatibility with the VS Code extension. For lldb-dap
-    /// this field is forwarded to the adapter (see `to_adapter_config`):
-    /// `"integratedTerminal"` makes lldb-dap issue a DAP `runInTerminal`
-    /// reverse request so Zed opens an interactive terminal and the program's
-    /// stdin accepts user input. `"internalConsole"` (lldb-dap's default)
-    /// captures stdio into the read-only Debug Console instead.
+    /// Controls where lldb-dap runs the debugged program. Forwarded to
+    /// lldb-dap's launch config (see `to_adapter_config`):
+    ///   - `"internalConsole"` (our default) → program stdio goes to the
+    ///     read-only Debug Console. Reliable; breakpoints/stepping/variables
+    ///     all work, but stdin cannot be typed into.
+    ///   - `"integratedTerminal"` → lldb-dap uses its "runInTerminal launcher"
+    ///     mechanism to open an interactive terminal so stdin works. On Zed
+    ///     this frequently times out (see `to_adapter_config` doc comment),
+    ///     especially when paths contain spaces. Opt in at your own risk.
+    /// gdb-dap does not understand this field.
     console: Option<String>,
     /// Display label for the debug scenario.
     label: String,
@@ -53,7 +57,7 @@ impl Default for XMakeDebugConfig {
             stop_at_entry: None,
             pid: None,
             debugger: None,
-            console: Some("integratedTerminal".to_string()),
+            console: Some("internalConsole".to_string()),
             label: "xmake debug".to_string(),
         }
     }
@@ -62,25 +66,37 @@ impl Default for XMakeDebugConfig {
 impl XMakeDebugConfig {
     /// Build the JSON configuration that the *underlying* debug adapter
     /// (lldb-dap / gdb-dap) understands. The xmake wrapper fields such as
-    /// `debugger`, `console`, `label` and `request` are intentionally dropped
-    /// — they are not part of the adapter's schema and only add noise.
+    /// `debugger`, `label` and `request` are intentionally dropped — they are
+    /// not part of the adapter's schema and only add noise.
     ///
     /// `stop_at_entry` is translated to the spelling each adapter expects.
     ///
-    /// The `console` field is **forwarded** to lldb-dap (not dropped): lldb-dap
-    /// reads it to decide whether to launch in an interactive integrated
-    /// terminal (`"integratedTerminal"`, stdin works) or the read-only Debug
-    /// Console (`"internalConsole"`, its default). Without it the user cannot
-    /// type into the running program. We also set the deprecated
-    /// `runInTerminal: true` so older lldb-dap (< 21.0, which predates the
-    /// `console` field) still get an interactive terminal.
+    /// `console` handling — see README "Debugging" section for the full story:
+    ///
+    /// lldb-dap's `console: "integratedTerminal"` (and the deprecated
+    /// `runInTerminal: true`) triggers lldb-dap's *own* "runInTerminal
+    /// launcher" mechanism (a FIFO-based child process, NOT the standard DAP
+    /// `runInTerminal` reverse request). That launcher re-execs the lldb-dap
+    /// binary with `--comm-file <fifo> --launch-target <program>`, and the
+    /// main process waits for the child to report the target PID over the
+    /// FIFO. On Zed this frequently times out — "Timed out trying to get
+    /// messages from the runInTerminal launcher" — because the launcher child
+    /// fails to start the target (paths containing spaces, shell quoting,
+    /// FIFO permission issues, etc.).
+    ///
+    /// We therefore default to `"internalConsole"`: the debug session runs in
+    /// the read-only Debug Console, which is reliable. Breakpoints, stepping
+    /// and variable inspection all work; only interactive stdin is
+    /// unavailable. Users who need stdin should run `xmake run` in Zed's
+    /// Terminal panel, or explicitly set `"console": "integratedTerminal"` in
+    /// their `.zed/debug.json` and accept the timeout risk.
     fn to_adapter_config(&self) -> serde_json::Value {
         let stop = self.stop_at_entry.unwrap_or(false);
         let debugger = self.debugger.as_deref().unwrap_or("lldb-dap");
         let console = self
             .console
             .clone()
-            .unwrap_or_else(|| "integratedTerminal".to_string());
+            .unwrap_or_else(|| "internalConsole".to_string());
         let mut cfg = serde_json::json!({
             "program": self.program.clone().unwrap_or_default(),
             "args": self.args.clone().unwrap_or_default(),
@@ -91,11 +107,13 @@ impl XMakeDebugConfig {
         match debugger {
             "lldb-dap" => {
                 obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
-                // `console` is supported from lldb-dap 21.0; `runInTerminal`
-                // is the deprecated equivalent for older builds. Both point at
-                // the same behavior, so setting them together is safe.
+                // Forward `console` so users who explicitly opt into
+                // `integratedTerminal` (in .zed/debug.json) get their wish.
+                // We do NOT set the deprecated `runInTerminal` field: lldb-dap
+                // 21.0+ parses both into the same internal `Console` enum
+                // (ProtocolRequests.cpp L310-311), so `console` alone
+                // suffices and avoids double-triggering on older builds.
                 obj.insert("console".to_string(), serde_json::Value::String(console));
-                obj.insert("runInTerminal".to_string(), serde_json::Value::Bool(true));
             }
             "gdb-dap" => {
                 // gdb-dap does not understand `console`; it always launches via
@@ -566,7 +584,7 @@ impl zed::Extension for XMakeExtension {
                     stop_at_entry: config.stop_on_entry,
                     pid: None,
                     debugger: None,
-                    console: Some("integratedTerminal".to_string()),
+                    console: Some("internalConsole".to_string()),
                     label: "xmake debug".to_string(),
                 };
                 let config_json = serde_json::to_string(&xmake_config)
@@ -654,7 +672,7 @@ impl zed::Extension for XMakeExtension {
             stop_at_entry: Some(false),
             pid: None,
             debugger: Some("lldb-dap".to_string()),
-            console: Some("integratedTerminal".to_string()),
+            console: Some("internalConsole".to_string()),
             label: resolved_label.clone(),
         };
         let config_json = serde_json::to_string(&xmake_config).ok()?;

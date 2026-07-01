@@ -42,9 +42,9 @@
     },
     "console": {
       "type": "string",
-      "description": "Specify where to launch the program: internal console (internalConsole), integrated terminal (integratedTerminal) or external terminal (externalTerminal).",
-      "default": "integratedTerminal",
-      "enum": ["integratedTerminal", "internalConsole"]
+      "description": "Where to launch the program. 'internalConsole' (default): reliable — breakpoints, stepping and variable inspection all work, but stdin cannot be typed into. 'integratedTerminal': interactive stdin, but lldb-dap's runInTerminal launcher frequently times out on Zed (especially with paths containing spaces). If you need stdin input, consider running `xmake run` in Zed's Terminal panel instead.",
+      "default": "internalConsole",
+      "enum": ["internalConsole", "integratedTerminal"]
     },
     "label": {
       "type": "string",

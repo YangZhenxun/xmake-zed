@@ -29,18 +29,22 @@ struct XMakeDebugConfig {
     stop_at_entry: Option<bool>,
     /// Process id to attach to (only meaningful for `request: "attach"`).
     pid: Option<u32>,
-    /// Which low-level debugger to drive: `"lldb-dap"` (default) or `"gdb-dap"`.
+    /// Which low-level debugger to drive. Defaults to `"codelldb"` (see the
+    /// crate-level note on why CodeLLDB is preferred over `lldb-dap`). Other
+    /// accepted values: `"lldb-dap"`, `"gdb-dap"`.
     debugger: Option<String>,
-    /// Controls where lldb-dap runs the debugged program. Forwarded to
-    /// lldb-dap's launch config (see `to_adapter_config`):
-    ///   - `"internalConsole"` (our default) → program stdio goes to the
-    ///     read-only Debug Console. Reliable; breakpoints/stepping/variables
-    ///     all work, but stdin cannot be typed into.
-    ///   - `"integratedTerminal"` → lldb-dap uses its "runInTerminal launcher"
-    ///     mechanism to open an interactive terminal so stdin works. On Zed
-    ///     this frequently times out (see `to_adapter_config` doc comment),
-    ///     especially when paths contain spaces. Opt in at your own risk.
-    /// gdb-dap does not understand this field.
+    /// Where the debugged program's stdio is connected. Forwarded to the
+    /// underlying adapter's launch config (see `to_adapter_config`):
+    ///   - `"internalConsole"` → read-only Debug Console. Reliable;
+    ///     breakpoints/stepping/variables all work, but stdin cannot be
+    ///     typed into. This is the *forced* default for `lldb-dap` because its
+    ///     own "runInTerminal launcher" mechanism times out on Zed.
+    ///   - `"integratedTerminal"` → an interactive terminal, so stdin works.
+    ///     CodeLLDB uses the standard DAP `runInTerminal` reverse request
+    ///     (which Zed supports) and is reliable; `lldb-dap` only reaches this
+    ///     through its fragile FIFO launcher. If omitted, the default is
+    ///     inferred from the `debugger`: `integratedTerminal` for CodeLLDB,
+    ///     `internalConsole` for lldb-dap.
     console: Option<String>,
     /// Display label for the debug scenario.
     label: String,
@@ -57,7 +61,7 @@ impl Default for XMakeDebugConfig {
             stop_at_entry: None,
             pid: None,
             debugger: None,
-            console: Some("internalConsole".to_string()),
+            console: None,
             label: "xmake debug".to_string(),
         }
     }
@@ -92,11 +96,21 @@ impl XMakeDebugConfig {
     /// their `.zed/debug.json` and accept the timeout risk.
     fn to_adapter_config(&self) -> serde_json::Value {
         let stop = self.stop_at_entry.unwrap_or(false);
-        let debugger = self.debugger.as_deref().unwrap_or("lldb-dap");
-        let console = self
-            .console
-            .clone()
-            .unwrap_or_else(|| "internalConsole".to_string());
+        let debugger = self.debugger.as_deref().unwrap_or("codelldb");
+        // CodeLLDB uses the standard DAP `runInTerminal` reverse request (which
+        // Zed supports), so interactive stdin works reliably. We therefore
+        // default its `console` to `integratedTerminal` so programs that read
+        // from stdin just work. lldb-dap only supports interactive stdin
+        // through its *own* "runInTerminal launcher" FIFO mechanism, which
+        // times out on Zed (see README "Debugging"), so we force its `console`
+        // to `internalConsole` unless the user explicitly opts in.
+        let console = self.console.clone().unwrap_or_else(|| {
+            if debugger == "lldb-dap" {
+                "internalConsole".to_string()
+            } else {
+                "integratedTerminal".to_string()
+            }
+        });
         let mut cfg = serde_json::json!({
             "program": self.program.clone().unwrap_or_default(),
             "args": self.args.clone().unwrap_or_default(),
@@ -114,6 +128,14 @@ impl XMakeDebugConfig {
                 // (ProtocolRequests.cpp L310-311), so `console` alone
                 // suffices and avoids double-triggering on older builds.
                 obj.insert("console".to_string(), serde_json::Value::String(console));
+            }
+            "codelldb" => {
+                obj.insert("stopOnEntry".to_string(), serde_json::Value::Bool(stop));
+                // CodeLLDB understands `console: integratedTerminal` and uses
+                // the standard DAP runInTerminal reverse request — interactive
+                // stdin works. `name` is used as the terminal title.
+                obj.insert("console".to_string(), serde_json::Value::String(console));
+                obj.insert("name".to_string(), serde_json::Value::String(self.label.clone()));
             }
             "gdb-dap" => {
                 // gdb-dap does not understand `console`; it always launches via
@@ -135,6 +157,7 @@ impl XMakeDebugConfig {
 
 struct XMakeExtension {
     cached_binary_path: Option<String>,
+    cached_codelldb_path: Option<String>,
 }
 
 impl XMakeExtension {
@@ -271,6 +294,82 @@ impl XMakeExtension {
         }
     }
 
+    /// Resolve the CodeLLDB debug adapter binary, downloading it on first use.
+    ///
+    /// CodeLLDB (`vadimcn/codelldb`) is a *native* DAP adapter bundled inside a
+    /// `.vsix` package at `extension/adapter/codelldb`. Unlike `lldb-dap`, it
+    /// uses the standard DAP `runInTerminal` reverse request — which Zed
+    /// supports — so interactive stdin works reliably inside Zed's terminal.
+    /// That is why Zed's built-in Rust/C++ debugging can accept terminal input
+    /// while `lldb-dap` cannot.
+    ///
+    /// The `.vsix` is fetched from the latest GitHub release and extracted via
+    /// `download_file(..., Zip)` (a vsix *is* a zip). The adapter binary lives
+    /// at `<version_dir>/extension/adapter/codelldb{,.exe}`.
+    fn find_codelldb(&mut self, _worktree: &Worktree) -> Result<(String, Vec<String>), String> {
+        // Return the cached path if it still exists.
+        if let Some(path) = &self.cached_codelldb_path {
+            if std::fs::metadata(path).map_or(false, |stat| stat.is_file()) {
+                return Ok((path.clone(), Vec::new()));
+            }
+        }
+
+        let (platform, arch) = zed::current_platform();
+        let platform_str = match platform {
+            zed::Os::Mac => "darwin",
+            zed::Os::Linux => "linux",
+            zed::Os::Windows => "win32",
+        };
+        let arch_str = match arch {
+            zed::Architecture::Aarch64 => "arm64",
+            zed::Architecture::X8664 => "x64",
+            zed::Architecture::X86 => {
+                return Err("32-bit x86 is not supported by CodeLLDB".to_string());
+            }
+        };
+        let asset_name = format!("codelldb-{platform_str}-{arch_str}.vsix");
+        let exe_suffix = match platform {
+            zed::Os::Windows => ".exe",
+            _ => "",
+        };
+
+        let release = zed::latest_github_release(
+            "vadimcn/codelldb",
+            zed::GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        )?;
+
+        let asset = release
+            .assets
+            .iter()
+            .find(|a| a.name == asset_name)
+            .ok_or_else(|| {
+                format!(
+                    "no CodeLLDB asset found matching {:?}. Available: {:?}",
+                    asset_name,
+                    release.assets.iter().map(|a| &a.name).collect::<Vec<_>>()
+                )
+            })?;
+
+        let version_dir = format!("codelldb-{}", release.version);
+        let binary_name = format!("codelldb{exe_suffix}");
+        let binary_path = format!("{version_dir}/extension/adapter/{binary_name}");
+
+        if !std::fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
+            zed::download_file(&asset.download_url, &version_dir, zed::DownloadedFileType::Zip)
+                .map_err(|e| format!("failed to download CodeLLDB: {e}"))?;
+
+            if platform != zed::Os::Windows {
+                zed::make_file_executable(&binary_path)?;
+            }
+        }
+
+        self.cached_codelldb_path = Some(binary_path.clone());
+        Ok((binary_path, Vec::new()))
+    }
+
     /// Resolve the absolute output path of an xmake target by running
     /// `xmake l targetpath.lua <target> <projectdir>` through Zed's WIT-backed
     /// process API.
@@ -322,6 +421,7 @@ impl zed::Extension for XMakeExtension {
     fn new() -> Self {
         Self {
             cached_binary_path: None,
+            cached_codelldb_path: None,
         }
     }
 
@@ -497,8 +597,12 @@ impl zed::Extension for XMakeExtension {
         let xmake_config: XMakeDebugConfig = serde_json::from_str(&config.config)
             .map_err(|e| format!("Failed to parse debug config: {}", e))?;
 
-        let debugger_type = xmake_config.debugger.as_deref().unwrap_or("lldb-dap");
+        let debugger_type = xmake_config.debugger.as_deref().unwrap_or("codelldb");
         let (debugger_path, base_args) = match debugger_type {
+            "codelldb" => {
+                let path_and_base_args = self.find_codelldb(worktree)?;
+                (path_and_base_args.0, path_and_base_args.1)
+            }
             "lldb-dap" => {
                 let path_and_base_args = self.find_lldb_dap(worktree)?;
                 (
@@ -583,8 +687,8 @@ impl zed::Extension for XMakeExtension {
                     request: "launch".to_owned(),
                     stop_at_entry: config.stop_on_entry,
                     pid: None,
-                    debugger: None,
-                    console: Some("internalConsole".to_string()),
+                    debugger: Some("codelldb".to_string()),
+                    console: Some("integratedTerminal".to_string()),
                     label: "xmake debug".to_string(),
                 };
                 let config_json = serde_json::to_string(&xmake_config)
@@ -671,8 +775,8 @@ impl zed::Extension for XMakeExtension {
             request: "launch".to_string(),
             stop_at_entry: Some(false),
             pid: None,
-            debugger: Some("lldb-dap".to_string()),
-            console: Some("internalConsole".to_string()),
+            debugger: Some("codelldb".to_string()),
+            console: Some("integratedTerminal".to_string()),
             label: resolved_label.clone(),
         };
         let config_json = serde_json::to_string(&xmake_config).ok()?;

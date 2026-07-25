@@ -47,7 +47,7 @@ Please see [xmake-github](https://github.com/xmake-io/xmake) and [website](https
 * Symbol Navigation
 * Project Templates
 * **Build / Run / Clean tasks** (Zed-native, fixed and deduplicated)
-* **Debugging** via a debug adapter (`lldb-dap` / `gdb-dap`) with an `xmake` debug locator that builds the target and resolves the executable automatically
+* **Debugging** via the **CodeLLDB** debug adapter (auto-downloaded) — with `lldb-dap` / `gdb-dap` also supported — and an `xmake` debug locator that builds the target and resolves the executable automatically. CodeLLDB gives you interactive stdin in Zed's terminal.
 * **Project-wide tasks**: one-click install of core xmake tasks into `.zed/tasks.json` so they are available from any file
 
 * **Full LSP Integration**: Complete language server support via [xmake_ls](https://github.com/CppCXY/xmake_ls)
@@ -264,12 +264,18 @@ so you can build a target and launch it under the debugger in one step.
   xmake config -m debug -y
   ```
 
-* A supported debug adapter on your `PATH`:
-  * **`lldb-dap`** (default) — `brew install llvm` (macOS), `sudo apt install
+* A supported debug adapter:
+  * **CodeLLDB** (default, auto-downloaded) — no manual install needed. The
+    extension fetches the `vadimcn/codelldb` release on first debug session and
+    caches it. CodeLLDB drives LLDB under the hood and supports interactive
+    stdin via Zed's terminal.
+  * **`lldb-dap`** (opt-in) — `brew install llvm` (macOS), `sudo apt install
     lldb` (Linux), or LLVM on Windows. On macOS, Xcode 16+'s `xcrun lldb-dap`
-    is also detected.
-  * **`gdb-dap`** — `gdb` started with `-i dap`. Set `"debugger": "gdb-dap"` in
-    your debug config.
+    is also detected. Set `"debugger": "lldb-dap"` to use it. Note: in Zed,
+    `lldb-dap` can only use the read-only Debug Console (interactive stdin times
+    out — see below).
+  * **`gdb-dap`** (opt-in) — `gdb` started with `-i dap`. Set
+    `"debugger": "gdb-dap"` in your debug config.
 
 ### Debugging via the locator (recommended)
 
@@ -278,7 +284,7 @@ so you can build a target and launch it under the debugger in one step.
    Selecting it:
    1. runs `xmake build <target>` (the build step),
    2. resolves the freshly built executable via `xmake l targetpath.lua`,
-   3. launches it under `lldb-dap`.
+   3. launches it under CodeLLDB (so you also get interactive stdin).
 3. Set breakpoints in your source and debug.
 
 ### Debugging via a manual `debug.json`
@@ -296,7 +302,7 @@ For full control, create `.zed/debug.json` (or use the debug modal):
     "args": [],
     "env": {},
     "stopOnEntry": false,
-    "debugger": "lldb-dap"
+    "debugger": "codelldb"
   }
 ]
 ```
@@ -304,8 +310,8 @@ For full control, create `.zed/debug.json` (or use the debug modal):
 When `program` is omitted, the locator resolves it automatically after the
 build step. Supported fields: `program`, `args`, `cwd`, `env`, `request`
 (`launch` | `attach`), `stopOnEntry`, `pid` (attach only), `debugger`
-(`lldb-dap` | `gdb-dap`), `console` (`internalConsole` | `integratedTerminal`),
-`label`.
+(`codelldb` | `lldb-dap` | `gdb-dap`), `console` (`internalConsole` |
+`integratedTerminal`), `label`.
 
 > The extension translates the xmake-style config into the schema the
 > underlying adapter expects (`stopOnEntry` for lldb-dap,
@@ -314,34 +320,37 @@ build step. Supported fields: `program`, `args`, `cwd`, `env`, `request`
 
 ### Interactive stdin / terminal input
 
-By default the debugged program runs in the **read-only Debug Console**
-(`"console": "internalConsole"`). Breakpoints, stepping and variable
-inspection all work; only interactive stdin is unavailable.
+The default debugger is now **CodeLLDB**, which uses the standard DAP
+`runInTerminal` reverse request that Zed supports. With
+`"console": "integratedTerminal"` (the default for CodeLLDB) your program's
+stdin is connected to a real Zed terminal, so you can type input during a
+debug session — breakpoints, stepping, variable inspection and stdin all
+work together.
 
-lldb-dap's `"console": "integratedTerminal"` (interactive terminal, stdin
-works) uses lldb-dap's own "runInTerminal launcher" mechanism — a FIFO-based
-child process, **not** the standard DAP `runInTerminal` reverse request. On
-Zed this frequently times out:
+`lldb-dap` (opt-in via `"debugger": "lldb-dap"`) is different: its
+`"console": "integratedTerminal"` uses lldb-dap's *own* "runInTerminal
+launcher" mechanism — a FIFO-based child process, **not** the standard DAP
+`runInTerminal` reverse request. On Zed this frequently times out:
 
 ```
 error: Failed to attach to the target process.
        Timed out trying to get messages from the runInTerminal launcher
 ```
 
-The timeout is triggered by a combination of factors: paths containing
-spaces, shell quoting, and FIFO communication between the lldb-dap launcher
-child and the main process. It is **not** a bug in this extension — it is a
-known incompatibility between lldb-dap's launcher mechanism and Zed's
-terminal integration.
+That timeout comes from paths containing spaces, shell quoting, and the FIFO
+communication between lldb-dap's launcher child and the main process. It is a
+known incompatibility between lldb-dap's launcher and Zed's terminal
+integration — **not** a bug in this extension. For `lldb-dap` we therefore
+force `"console": "internalConsole"` (read-only Debug Console: reliable, but
+no interactive stdin). If you need stdin with `lldb-dap`, the workaround is to
+run `xmake run <target>` in Zed's Terminal panel (`ctrl+` ` `) and use the
+debugger for breakpoints/stepping only.
 
-> **Note:** Zed's built-in Rust/C++ debugging uses **CodeLLDB**
-> (`vadimcn/codelldb`), which is a *different* adapter from `lldb-dap` and
-> has its own terminal management. That is why Rust debug accepts stdin while
-> `lldb-dap` does not.
-
-If you need interactive stdin, the reliable workaround is to run the program
-manually in Zed's Terminal panel (`ctrl+` ` `) with `xmake run <target>`,
-and use the debugger for breakpoints/stepping only.
+> **Why Rust debug accepts stdin but `lldb-dap` does not:** Zed's built-in
+> Rust/C++ debugging uses **CodeLLDB** (`vadimcn/codelldb`) — a *different*
+> adapter with its own (standard) terminal management. The xmake extension now
+> uses that same CodeLLDB adapter by default, so xmake targets get the same
+> working interactive terminal.
 
 ## Binary Detection Priority
 

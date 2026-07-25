@@ -31,9 +31,9 @@
     },
     "debugger": {
       "type": "string",
-      "description": "The type of debugger to use",
-      "default": "lldb-dap",
-      "enum": ["lldb-dap", "gdb-dap"]
+      "description": "The type of debugger to use. CodeLLDB is the default and recommended adapter: it is downloaded automatically on first use and supports interactive stdin via Zed's terminal. lldb-dap and gdb-dap are also supported (lldb-dap must be installed separately and only supports read-only stdin in Zed's Debug Console).",
+      "default": "codelldb",
+      "enum": ["codelldb", "lldb-dap", "gdb-dap"]
     },
     "request": {
       "type": "string",
@@ -42,8 +42,8 @@
     },
     "console": {
       "type": "string",
-      "description": "Where to launch the program. 'internalConsole' (default): reliable — breakpoints, stepping and variable inspection all work, but stdin cannot be typed into. 'integratedTerminal': interactive stdin, but lldb-dap's runInTerminal launcher frequently times out on Zed (especially with paths containing spaces). If you need stdin input, consider running `xmake run` in Zed's Terminal panel instead.",
-      "default": "internalConsole",
+      "description": "Where to launch the program. 'integratedTerminal' (default for CodeLLDB): an interactive terminal so stdin works — CodeLLDB uses the standard DAP runInTerminal request that Zed supports, so this is reliable. 'internalConsole': read-only Debug Console; reliable but stdin cannot be typed in. For lldb-dap, 'integratedTerminal' uses its fragile FIFO launcher and frequently times out on Zed.",
+      "default": "integratedTerminal",
       "enum": ["internalConsole", "integratedTerminal"]
     },
     "label": {

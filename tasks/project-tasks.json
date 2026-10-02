@@ -1,0 +1,85 @@
+[
+  {
+    "label": "xmake: build",
+    "command": "xmake",
+    "args": [
+      "build"
+    ],
+    "reveal": "always",
+    "tags": [
+      "xmake-build"
+    ]
+  },
+  {
+    "label": "xmake: build all targets",
+    "command": "xmake",
+    "args": [
+      "build",
+      "-a"
+    ],
+    "reveal": "always"
+  },
+  {
+    "label": "xmake: rebuild",
+    "command": "xmake",
+    "args": [
+      "build",
+      "-r"
+    ],
+    "reveal": "always"
+  },
+  {
+    "label": "xmake: clean",
+    "command": "xmake",
+    "args": [
+      "clean"
+    ]
+  },
+  {
+    "label": "xmake: run",
+    "command": "xmake",
+    "args": [
+      "run"
+    ],
+    "reveal": "always",
+    "tags": [
+      "xmake-run"
+    ]
+  },
+  {
+    "label": "xmake: configure",
+    "command": "xmake",
+    "args": [
+      "config"
+    ]
+  },
+  {
+    "label": "xmake: debug mode",
+    "command": "xmake",
+    "args": [
+      "config",
+      "-m",
+      "debug"
+    ]
+  },
+  {
+    "label": "xmake: release mode",
+    "command": "xmake",
+    "args": [
+      "config",
+      "-m",
+      "release"
+    ]
+  },
+  {
+    "label": "xmake: generate compile_commands.json (into .zed)",
+    "command": "xmake",
+    "args": [
+      "project",
+      "-k",
+      "compile_commands",
+      ".zed"
+    ],
+    "reveal": "always"
+  }
+]

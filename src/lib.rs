@@ -405,10 +405,15 @@ impl XMakeExtension {
     /// For tasks like `xmake run foo` / `xmake build foo` the target is
     /// `args[1]`. For tasks without an explicit target it falls back to
     /// `"default"`, which matches xmake's own behaviour.
+    ///
+    /// Flags placed where a target would be (e.g. the shipped
+    /// `xmake build -a` / `xmake build -v` tasks, whose `args[1]` is `-a` or
+    /// `-v`) are not target names and must not be treated as such — the
+    /// locator would otherwise try to resolve a target literally named `-a`.
     fn target_name_from_task(task: &zed_extension_api::TaskTemplate) -> String {
         if task.command == "xmake" {
             if let Some(name) = task.args.get(1) {
-                if !name.is_empty() {
+                if !name.is_empty() && !name.starts_with('-') {
                     return name.clone();
                 }
             }
@@ -739,10 +744,11 @@ impl zed::Extension for XMakeExtension {
         // this). We only know how to debug tasks that build or run an xmake
         // target, i.e. `xmake build [target]` or `xmake run [target]`.
         //
-        // Tasks that chain commands via `sh -c` (e.g. "build & run") are
-        // rejected here on purpose: their args[0] is "-c", not "build"/"run",
-        // and we cannot reliably extract a target from a shell string. Users
-        // who want to debug those should use a manual `.zed/debug.json`.
+        // Anything else — including shell-chained commands such as the old
+        // `sh -c "xmake build && xmake run"` tasks, whose args[0] is "-c" —
+        // is rejected here on purpose, because we cannot reliably extract a
+        // target from them. Users who want to debug those should use a manual
+        // `.zed/debug.json`.
         if build_task.command != "xmake" {
             return None;
         }
@@ -761,6 +767,11 @@ impl zed::Extension for XMakeExtension {
         // build step runs in the right directory.
         let project_root = build_task.cwd.clone()?;
         let target_name = Self::target_name_from_task(&build_task);
+        // "default" is our sentinel for "no explicit target was given".
+        // It is *not* a real xmake target name (`xmake build default` fails),
+        // so when it appears we must build without a target argument and let
+        // `run_dap_locator` resolve the first default binary target instead.
+        let is_default_target = target_name == "default";
 
         let xmake_config = XMakeDebugConfig {
             // Left empty on purpose: resolved post-build by run_dap_locator.
@@ -781,13 +792,22 @@ impl zed::Extension for XMakeExtension {
         };
         let config_json = serde_json::to_string(&xmake_config).ok()?;
 
-        // Build step: `xmake build <target>`. After it completes, Zed calls
+        // Build step: `xmake build [<target>]`. After it completes, Zed calls
         // `run_dap_locator` (because `locator_name` is set) to resolve the
         // freshly built executable.
+        let build_label = if is_default_target {
+            "xmake build".to_string()
+        } else {
+            format!("xmake build {}", target_name)
+        };
+        let mut build_args = vec!["build".to_string()];
+        if !is_default_target {
+            build_args.push(target_name.clone());
+        }
         let build_template = zed_extension_api::TaskTemplate {
-            label: format!("xmake build {}", target_name),
+            label: build_label,
             command: "xmake".to_string(),
-            args: vec!["build".to_string(), target_name.clone()],
+            args: build_args,
             env: Default::default(),
             cwd: build_task.cwd.clone(),
         };
@@ -820,14 +840,19 @@ impl zed::Extension for XMakeExtension {
             .clone()
             .ok_or_else(|| "build task has no cwd; cannot locate xmake project".to_string())?;
         let target_name = Self::target_name_from_task(&config);
+        let display_target = if target_name == "default" {
+            "default target".to_string()
+        } else {
+            format!("target `{}`", target_name)
+        };
 
         let program = self
             .resolve_target_program(&target_name, &project_root)
             .ok_or_else(|| {
                 format!(
-                    "could not resolve the executable for target `{}` in `{}`. \
-                     Run `xmake config -m debug` and `xmake build {}` first.",
-                    target_name, project_root, target_name
+                    "could not resolve the executable for {} in `{}`. \
+                     Run `xmake config -m debug` and `xmake build` first.",
+                    display_target, project_root
                 )
             })?;
 

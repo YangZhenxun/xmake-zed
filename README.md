@@ -46,10 +46,11 @@ Please see [xmake-github](https://github.com/xmake-io/xmake) and [website](https
 * Code Intelligence
 * Symbol Navigation
 * Project Templates
-* **Build / Run / Clean tasks** (Zed-native, fixed and deduplicated)
+* **Build / Run / Clean tasks** (Zed-native, cross-platform — plain `xmake`
+  invocations, no POSIX shell required; works on Windows too)
 * **Debugging** via the **CodeLLDB** debug adapter (auto-downloaded) — with `lldb-dap` / `gdb-dap` also supported — and an `xmake` debug locator that builds the target and resolves the executable automatically. CodeLLDB gives you interactive stdin in Zed's terminal.
-* **Project-wide tasks**: one-click install of core xmake tasks into `.zed/tasks.json` so they are available from any file
-
+* **Project-wide tasks**: one-click install of the core xmake tasks into `.zed/tasks.json` (POSIX and Windows variants) so they are available from any file — matching how the VS Code xmake extension exposes its actions workspace-wide
+* **`compile_commands.json` into `.zed/`**: `xmake project -k compile_commands .zed` writes the file straight into the `.zed/` directory (same idea as the VS Code extension's `.vscode/`), no shell needed
 * **Full LSP Integration**: Complete language server support via [xmake_ls](https://github.com/CppCXY/xmake_ls)
 * **Auto-completion**: Intelligent code completion for XMake APIs
 * **Diagnostics**: Real-time error detection and warnings
@@ -222,33 +223,47 @@ Linux users can choose their preferred binary variant. Add to your Zed settings:
 
 The extension ships a comprehensive set of Zed-native tasks (visible via
 `task: spawn` while an `xmake.lua` is open): `build`, `build all`, `rebuild`,
-`clean`, `run`, `build & run`, `configure`, mode switches (`debug` /
-`release` / `relwithdebinfo` / `minsizerel`), toolchain switches (GCC / Clang /
-MSVC / Zig), C++ standard switches, sanitizer toggles, `install`, `package`,
-`format`, project generation (`compile_commands.json`, Visual Studio, Xcode),
-and project scaffolding tasks.
+`clean`, `run`, `configure`, mode switches (`debug` / `release` /
+`relwithdebinfo` / `minsizerel`), toolchain switches (GCC / Clang / MSVC /
+Zig), C++ standard switches, sanitizer toggles, `install`, `package`, `format`,
+project generation (`compile_commands.json`, Visual Studio, Xcode), and
+project scaffolding tasks.
 
 A few things worth knowing:
 
-* Tasks that chain commands (`rebuild`, `build & run`, the `compile_commands`
-  generator) run through `sh -c`, so they require a POSIX shell. On Windows use
-  Git Bash / WSL, or run the individual `xmake` steps separately.
+* **Every task is a plain `xmake` invocation** — no `sh -c` wrappers, no POSIX
+  shell requirement. `rebuild` uses `xmake build -r`, `build & run` uses
+  `xmake run` (which builds the target automatically first), and the
+  `compile_commands` generator uses `xmake project -k compile_commands .zed`.
+  The same tasks therefore work identically on Windows, macOS and Linux
+  (fixes upstream issue #5).
 * `compile_commands.json` is generated **into the `.zed/` directory** so the
   whole `.zed/` folder can be gitignored cleanly (matches the VS Code
   extension's behaviour with `.vscode/`). Point `clangd` / `ccls` at
   `.zed/compile_commands.json`.
 
-### Making tasks available from any file (issue #4)
+### Making tasks available from any file (issues #4 and #5)
 
 By design, Zed only exposes a language extension's tasks while a file of that
 language is open — so the xmake tasks normally appear only when `xmake.lua` is
-the active buffer.
+the active buffer, and not at all otherwise (this is why the tasks seemed
+"unavailable" from the command palette in issue #5).
 
-To make the core build/run/clean/configure tasks available project-wide
-(regardless of which file is open), run the task **`xmake: install project
-tasks (to .zed/tasks.json)`** once. It writes a small set of core tasks into
-your project's `.zed/tasks.json` (backing up any existing file to
-`.zed/tasks.json.bak`). After that, `task: spawn` lists them from any file.
+Like the VS Code xmake extension (whose build/run actions are workspace-scoped,
+not tied to the active tab), the fix is to install the tasks as **project
+tasks** in `.zed/tasks.json`. Do it once per project with one of these tasks
+(from any file once `xmake.lua` is open — or just copy
+`tasks/project-tasks.json` from this repository to `.zed/tasks.json`):
+
+* **`xmake: install project tasks (POSIX: macOS/Linux/Git Bash)`** — uses `sh`
+* **`xmake: install project tasks (Windows PowerShell)`** — uses
+  `powershell.exe` (no shell dependency, works on Windows 10/11)
+
+Either one writes the core build/run/clean/configure/compile_commands tasks
+into your project's `.zed/tasks.json`, backing up any existing file to
+`.zed/tasks.json.bak`. After that, `task: spawn` lists them from **any** file
+— and the debug locator can also turn those project tasks into debug
+scenarios.
 
 ## Debugging
 
@@ -257,8 +272,9 @@ so you can build a target and launch it under the debugger in one step.
 
 ### Prerequisites
 
-* A debug build of your target. The locator runs `xmake build <target>` for
-  you, but the project must be configured for debugging first:
+* A debug build of your target. The locator runs `xmake build [<target>]` for
+  you (no target = the project's default targets), but the project must be
+  configured for debugging first:
 
   ```bash
   xmake config -m debug -y
@@ -280,9 +296,12 @@ so you can build a target and launch it under the debugger in one step.
 ### Debugging via the locator (recommended)
 
 1. Open the Zed debug picker (`debugger: start`).
-2. The `xmake` locator offers one scenario per xmake target (built + launched).
-   Selecting it:
-   1. runs `xmake build <target>` (the build step),
+2. The `xmake` locator offers one scenario per xmake build/run task (built +
+   launched). For the shipped `xmake build` / `xmake run` tasks (or the
+   project tasks installed into `.zed/tasks.json`) this debugs the project's
+   default binary target; add a custom task such as `xmake run mytarget` to
+   debug a specific target. Selecting the scenario:
+   1. runs `xmake build [<target>]` (the build step),
    2. resolves the freshly built executable via `xmake l targetpath.lua`,
    3. launches it under CodeLLDB (so you also get interactive stdin).
 3. Set breakpoints in your source and debug.

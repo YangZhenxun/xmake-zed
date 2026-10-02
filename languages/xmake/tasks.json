@@ -5,9 +5,80 @@
     "args": [
       "build"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
     "tags": [
       "xmake-build"
+    ]
+  },
+  {
+    "label": "xmake: build all targets",
+    "command": "xmake",
+    "args": [
+      "build",
+      "-a"
+    ],
+    "reveal": "always"
+  },
+  {
+    "label": "xmake: rebuild",
+    "command": "xmake",
+    "args": [
+      "build",
+      "-r"
+    ],
+    "reveal": "always"
+  },
+  {
+    "label": "xmake: clean",
+    "command": "xmake",
+    "args": [
+      "clean"
+    ]
+  },
+  {
+    "label": "xmake: run",
+    "command": "xmake",
+    "args": [
+      "run"
+    ],
+    "reveal": "always",
+    "tags": [
+      "xmake-run"
+    ]
+  },
+  {
+    "label": "xmake: configure",
+    "command": "xmake",
+    "args": [
+      "config"
+    ]
+  },
+  {
+    "label": "xmake: debug mode",
+    "command": "xmake",
+    "args": [
+      "config",
+      "-m",
+      "debug"
+    ]
+  },
+  {
+    "label": "xmake: release mode",
+    "command": "xmake",
+    "args": [
+      "config",
+      "-m",
+      "release"
+    ]
+  },
+  {
+    "label": "xmake: generate compile_commands.json (into .zed)",
+    "command": "xmake",
+    "args": [
+      "project",
+      "-k",
+      "compile_commands",
+      ".zed"
     ],
     "reveal": "always"
   },
@@ -18,45 +89,10 @@
       "build",
       "-v"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT",
     "tags": [
       "xmake-build"
     ],
     "reveal": "always"
-  },
-  {
-    "label": "xmake: build all targets",
-    "command": "xmake",
-    "args": [
-      "build",
-      "-a"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "tags": [
-      "xmake-build"
-    ],
-    "reveal": "always"
-  },
-  {
-    "label": "xmake: rebuild (clean + build)",
-    "command": "sh",
-    "args": [
-      "-c",
-      "xmake clean -a && xmake build"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "tags": [
-      "xmake-build"
-    ],
-    "reveal": "always"
-  },
-  {
-    "label": "xmake: clean",
-    "command": "xmake",
-    "args": [
-      "clean"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
   },
   {
     "label": "xmake: clean all",
@@ -64,54 +100,24 @@
     "args": [
       "clean",
       "-a"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
-  },
-  {
-    "label": "xmake: run",
-    "command": "xmake",
-    "args": [
-      "run"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "tags": [
-      "xmake-run"
-    ],
-    "reveal": "always"
+    ]
   },
   {
     "label": "xmake: build & run",
-    "command": "sh",
+    "command": "xmake",
     "args": [
-      "-c",
-      "xmake build && xmake run"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "tags": [
-      "xmake-run"
+      "run"
     ],
     "reveal": "always"
   },
   {
     "label": "xmake: build & run (verbose)",
-    "command": "sh",
-    "args": [
-      "-c",
-      "xmake build -v && xmake run"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "tags": [
-      "xmake-run"
-    ],
-    "reveal": "always"
-  },
-  {
-    "label": "xmake: configure",
     "command": "xmake",
     "args": [
-      "config"
+      "run",
+      "-v"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "reveal": "always"
   },
   {
     "label": "xmake: clean configuration",
@@ -119,8 +125,7 @@
     "args": [
       "config",
       "-c"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: configure menu",
@@ -128,28 +133,7 @@
     "args": [
       "config",
       "--menu"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
-  },
-  {
-    "label": "xmake: debug mode",
-    "command": "xmake",
-    "args": [
-      "config",
-      "-m",
-      "debug"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
-  },
-  {
-    "label": "xmake: release mode",
-    "command": "xmake",
-    "args": [
-      "config",
-      "-m",
-      "release"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: relwithdebinfo mode",
@@ -158,8 +142,7 @@
       "config",
       "-m",
       "relwithdebinfo"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: minsizerel mode",
@@ -168,18 +151,7 @@
       "config",
       "-m",
       "minsizerel"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
-  },
-  {
-    "label": "xmake: generate compile_commands.json (into .zed)",
-    "command": "sh",
-    "args": [
-      "-c",
-      "xmake project -k compile_commands && mkdir -p .zed && mv -f compile_commands.json .zed/ 2>/dev/null; true"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "reveal": "always"
+    ]
   },
   {
     "label": "xmake: generate Visual Studio project",
@@ -188,8 +160,7 @@
       "project",
       "-k",
       "vs2022"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: generate Xcode project",
@@ -198,8 +169,7 @@
       "project",
       "-k",
       "xcode"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: install",
@@ -208,24 +178,21 @@
       "install",
       "-o",
       "install"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: package",
     "command": "xmake",
     "args": [
       "package"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: format",
     "command": "xmake",
     "args": [
       "format"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: show targets",
@@ -234,7 +201,6 @@
       "show",
       "-l"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT",
     "reveal": "always"
   },
   {
@@ -243,7 +209,6 @@
     "args": [
       "show"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT",
     "reveal": "always"
   },
   {
@@ -252,7 +217,6 @@
     "args": [
       "--version"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT",
     "reveal": "always"
   },
   {
@@ -262,8 +226,7 @@
       "config",
       "--toolchain=gcc",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: Clang toolchain",
@@ -272,8 +235,7 @@
       "config",
       "--toolchain=clang",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: MSVC toolchain (VS 2022)",
@@ -283,8 +245,7 @@
       "--toolchain=msvc",
       "--vs=2022",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: Zig toolchain",
@@ -293,8 +254,7 @@
       "config",
       "--toolchain=@zig",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: C++20 standard",
@@ -303,8 +263,7 @@
       "config",
       "--cxxstd=c++20",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: C++23 standard",
@@ -313,8 +272,7 @@
       "config",
       "--cxxstd=c++23",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: enable LTO",
@@ -323,8 +281,7 @@
       "config",
       "--enable-lto",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: enable ASAN",
@@ -333,8 +290,7 @@
       "config",
       "--enable-asan",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: enable TSAN",
@@ -343,8 +299,7 @@
       "config",
       "--enable-tsan",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: enable UBSAN",
@@ -353,8 +308,7 @@
       "config",
       "--enable-ubsan",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: build with Mold linker",
@@ -363,8 +317,7 @@
       "config",
       "--ld=mold",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: build with LLD linker",
@@ -373,8 +326,7 @@
       "config",
       "--ld=lld",
       "-y"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: create project (help)",
@@ -383,7 +335,6 @@
       "create",
       "--help"
     ],
-    "cwd": "$ZED_WORKTREE_ROOT",
     "reveal": "always"
   },
   {
@@ -396,8 +347,7 @@
       "-t",
       "console",
       "${ZED_SELECTED_TEXT:myproject}"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: create C console project",
@@ -409,8 +359,7 @@
       "-t",
       "console",
       "${ZED_SELECTED_TEXT:myproject}"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: create Rust console project",
@@ -422,8 +371,7 @@
       "-t",
       "console",
       "${ZED_SELECTED_TEXT:myproject}"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: create C++ static library project",
@@ -435,8 +383,7 @@
       "-t",
       "static",
       "${ZED_SELECTED_TEXT:myproject}"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
     "label": "xmake: create C++ shared library project",
@@ -448,15 +395,25 @@
       "-t",
       "shared",
       "${ZED_SELECTED_TEXT:myproject}"
-    ],
-    "cwd": "$ZED_WORKTREE_ROOT"
+    ]
   },
   {
-    "label": "xmake: install project tasks (to .zed/tasks.json)",
+    "label": "xmake: install project tasks (POSIX: macOS/Linux/Git Bash)",
     "command": "sh",
     "args": [
       "-c",
-      "mkdir -p \"$ZED_WORKTREE_ROOT/.zed\"\nF=\"$ZED_WORKTREE_ROOT/.zed/tasks.json\"\nif [ -f \"$F\" ]; then cp \"$F\" \"$F.bak\"; echo \"Backed up existing tasks.json to tasks.json.bak\"; fi\ncat > \"$F\" <<'XMAKE_TASKS_EOF'\n[{\"label\":\"xmake: build\",\"command\":\"xmake\",\"args\":[\"build\"],\"reveal\":\"always\"},{\"label\":\"xmake: build all targets\",\"command\":\"xmake\",\"args\":[\"build\",\"-a\"],\"reveal\":\"always\"},{\"label\":\"xmake: rebuild (clean + build)\",\"command\":\"sh\",\"args\":[\"-c\",\"xmake clean -a && xmake build\"],\"reveal\":\"always\"},{\"label\":\"xmake: clean\",\"command\":\"xmake\",\"args\":[\"clean\"]},{\"label\":\"xmake: run\",\"command\":\"xmake\",\"args\":[\"run\"],\"reveal\":\"always\"},{\"label\":\"xmake: build & run\",\"command\":\"sh\",\"args\":[\"-c\",\"xmake build && xmake run\"],\"reveal\":\"always\"},{\"label\":\"xmake: configure\",\"command\":\"xmake\",\"args\":[\"config\"]},{\"label\":\"xmake: debug mode\",\"command\":\"xmake\",\"args\":[\"config\",\"-m\",\"debug\"]},{\"label\":\"xmake: generate compile_commands.json (into .zed)\",\"command\":\"sh\",\"args\":[\"-c\",\"xmake project -k compile_commands && mkdir -p .zed && mv -f compile_commands.json .zed/ 2>/dev/null; true\"],\"reveal\":\"always\"}]\nXMAKE_TASKS_EOF\necho \"Installed xmake tasks to $F — they are now available from any file via task: spawn.\""
+      "set -e\nmkdir -p .zed\nF=\".zed/tasks.json\"\nif [ -f \"$F\" ]; then cp \"$F\" \"$F.bak\"; echo \"Backed up existing tasks.json to tasks.json.bak\"; fi\ncat > \"$F\" <<'XMAKE_TASKS_EOF'\n[{\"label\":\"xmake: build\",\"command\":\"xmake\",\"args\":[\"build\"],\"reveal\":\"always\"},{\"label\":\"xmake: build all targets\",\"command\":\"xmake\",\"args\":[\"build\",\"-a\"],\"reveal\":\"always\"},{\"label\":\"xmake: rebuild\",\"command\":\"xmake\",\"args\":[\"build\",\"-r\"],\"reveal\":\"always\"},{\"label\":\"xmake: clean\",\"command\":\"xmake\",\"args\":[\"clean\"]},{\"label\":\"xmake: run\",\"command\":\"xmake\",\"args\":[\"run\"],\"reveal\":\"always\"},{\"label\":\"xmake: configure\",\"command\":\"xmake\",\"args\":[\"config\"]},{\"label\":\"xmake: debug mode\",\"command\":\"xmake\",\"args\":[\"config\",\"-m\",\"debug\"]},{\"label\":\"xmake: release mode\",\"command\":\"xmake\",\"args\":[\"config\",\"-m\",\"release\"]},{\"label\":\"xmake: generate compile_commands.json (into .zed)\",\"command\":\"xmake\",\"args\":[\"project\",\"-k\",\"compile_commands\",\".zed\"],\"reveal\":\"always\"}]\nXMAKE_TASKS_EOF\necho \"Installed xmake tasks to $F - they are now available from any file via task: spawn.\""
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "xmake: install project tasks (Windows PowerShell)",
+    "command": "powershell",
+    "args": [
+      "-NoProfile",
+      "-Command",
+      "$ErrorActionPreference = 'Stop'; $d = Join-Path (Get-Location) '.zed'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $f = Join-Path $d 'tasks.json'; if (Test-Path $f) { Copy-Item $f ($f + '.bak') -Force; Write-Output 'Backed up existing tasks.json to tasks.json.bak' }; [System.IO.File]::WriteAllText($f, '[{\"label\":\"xmake: build\",\"command\":\"xmake\",\"args\":[\"build\"],\"reveal\":\"always\"},{\"label\":\"xmake: build all targets\",\"command\":\"xmake\",\"args\":[\"build\",\"-a\"],\"reveal\":\"always\"},{\"label\":\"xmake: rebuild\",\"command\":\"xmake\",\"args\":[\"build\",\"-r\"],\"reveal\":\"always\"},{\"label\":\"xmake: clean\",\"command\":\"xmake\",\"args\":[\"clean\"]},{\"label\":\"xmake: run\",\"command\":\"xmake\",\"args\":[\"run\"],\"reveal\":\"always\"},{\"label\":\"xmake: configure\",\"command\":\"xmake\",\"args\":[\"config\"]},{\"label\":\"xmake: debug mode\",\"command\":\"xmake\",\"args\":[\"config\",\"-m\",\"debug\"]},{\"label\":\"xmake: release mode\",\"command\":\"xmake\",\"args\":[\"config\",\"-m\",\"release\"]},{\"label\":\"xmake: generate compile_commands.json (into .zed)\",\"command\":\"xmake\",\"args\":[\"project\",\"-k\",\"compile_commands\",\".zed\"],\"reveal\":\"always\"}]', (New-Object System.Text.UTF8Encoding($false))); Write-Output ('Installed xmake tasks to ' + $f + ' - they are now available from any file via task: spawn.')"
     ],
     "cwd": "$ZED_WORKTREE_ROOT",
     "reveal": "always"
